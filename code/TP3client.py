@@ -162,7 +162,7 @@ def consultaTopologia(nseq):
     
 def esperaResp(nseq):
     resp = False    
-    while not resp:
+    while True:#not resp:
         try:
             print("Esperando resposta")
             # Espera 4 segundos para conectar com algum socket
@@ -175,7 +175,8 @@ def esperaResp(nseq):
             #csocket.send(msg)
             resp = recebeMsg(csocket, nseq)
         except socket.timeout:
-            print("Nenhum resposta recebida.")
+            if not resp:
+                print("Nenhuma resposta recebida.")
             break
         
 def recebeMsg(s, nseq):
