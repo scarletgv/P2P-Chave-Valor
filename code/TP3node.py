@@ -48,7 +48,7 @@ def criaIDmsg():
     idmsg = struct.pack("!hh", tipo, porto)    
     return idmsg
 
-def criaFloodMsg(t, info):    
+def criaFloodMsg(t, info, nseq, portoC, ttl):    
     '''
     KEYFLOOD OU TOPOFLOOD
     
@@ -57,17 +57,16 @@ def criaFloodMsg(t, info):
     +---------------------+-----+------+---------+------------+---------+--//--+
     '''    
     tipo = t
-    TTL = 3
-    nseq = 0
+    #TTL = 3
     enderecoIP = '127.0.0.1'
     IP = enderecoIP.split(".")
-    porto = porta
+    #porto = porta
     valor = bytes(info, 'ascii')
     tamanho = len(valor)    
-    floodmsg = struct.pack("!hhibbbbhh%ds"%(tamanho,), tipo, TTL, nseq, int(IP[0]),int(IP[1]),int(IP[2]),int(IP[3]),porto,tamanho,valor)    
+    floodmsg = struct.pack("!hhibbbbhh%ds"%(tamanho,), tipo, ttl, nseq, int(IP[0]),int(IP[1]),int(IP[2]),int(IP[3]),portoC,tamanho,valor)    
     return floodmsg
 
-def criaRespMsg(valor):    
+def criaRespMsg(valor, nseq):    
     '''
     RESP
     
@@ -77,7 +76,6 @@ def criaRespMsg(valor):
     
     '''    
     tipo = RESP
-    nseq = 0
     v = bytes(valor, 'ascii')
     tamanho = len(v)    
     resp = struct.pack("!hih%ds"%(tamanho,), tipo, nseq, tamanho, v)    
@@ -158,15 +156,31 @@ def leIDmsg(s):
     else:
         print("IDmsg - porto: "+str(porto))
         return 'client', porto
-
-def recebeMsg(s, tipoRecv):
-    print("Tem mensagem")
-    # Lê o tipo para saber como ler o restante
-    #msg = s.recv(2)
-    #msgUnp = struct.unpack("!h", msg)
-    #tipoRecv = msgUnp[0]
     
-    # Espera receber ID, requisiçao e floods
+def alagamento(msg, s, conn):
+    print("Iniciando alagamento.")
+    for i in conn:
+        if i is not server:
+            if i is not s:
+                print("Enviando mensagem de alagamento.")
+                i.send(msg)  
+                
+def conectaCliente(msg, ipC, portoC):
+    c = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    end = (ipC,portoC)
+    print("Conectando ao cliente "+str(ipC)+":"+str(portoC))
+    c.bind(end)
+    c.connect(end)
+    c.setblocking(0)
+    #inputs.append(c)
+    c.send(msg)
+    c.close()    
+    #message_queues[c] = queue.Queue()
+    #message_queues[c].put(msg)
+
+def recebeMsg(s, tipoRecv, i):
+    # Espera receber ID, requisiçao e floods    
+    # Mensagem de identificação
     if tipoRecv == IDmsg:
         print("Mensagem ID")
         origem, p = leIDmsg(s)   
@@ -176,51 +190,72 @@ def recebeMsg(s, tipoRecv):
         elif origem == 'client':
             # Faz algo
             pass
-        return False
-        
+        # Não ha mensagem para enviar
+    # Mensagem de requisição de chave    
     elif tipoRecv == KEYREQ:
         nseqRecv, chave = leKeyReq(s)    
         # Procura a chave em seu banco
         if chave in banco:
             print("Eu tenho a chave!")
-            # Inicia conexao com o cliente, (nesse caso ja existe conexao)
             # Manda resp com a chave pro cliente
-            resposta = criaRespMsg(banco[chave])
-            return resposta
-            
+            resposta = criaRespMsg(banco[chave], nseqRecv)
+            return resposta            
         else:
             print("Não tenho a chave, repassando requisição...")
-            msg = criaFloodMsg(KEYFLOOD, chave)
-            # Nao faz nada ainda, enviara pros outros servents
-        
+            print("PORTO ORIGEM:"+str(s.getsockname()[1]))
+            msg = criaFloodMsg(KEYFLOOD, chave, nseqRecv, portoC, 3) 
+            # Envia mensagem para todos seus vizinhos
+            # Exceto o que enviou a mensagem
+            alagamento(msg, s, i)            
+    
+    # Mensagem de requisição de topologia      
     elif tipoRecv == TOPOREQ:
         nseqRecv = leTopoReq(s)   
         # Envia topologia... comeca com o endereco do proprio servent
-        topologia = '127.0.0.1:'+str(porta)
-        msg = criaFloodMsg(TOPOFLOOD, topologia)
+        topologia = '127.0.0.1:'+str(porta)+' '
+        
+        msg = criaFloodMsg(TOPOFLOOD, topologia, nseqRecv, portoC, 3)        
+        alagamento(msg, s, i)
+        print("PORTO ORIGEM:"+str(s.getsockname()[1]))
+        
+        resposta = criaRespMsg(topologia, nseqRecv)
+        return resposta
         # Enviara para os outros servents
         # Envia topologia pro cliente de volta também
         
-    elif tipoRecv == KEYFLOOD or tipoRecv == TOPOFLOOD:
-        
-        # lembrar de checar se mensagem é repetida
-        
-        ttl, nseqRecv, ip_orig, porto_orig, info = leFlood(s)    
+    elif tipoRecv == KEYFLOOD or tipoRecv == TOPOFLOOD:                
+        ttl, nseqRecv, ip_orig, porto_orig, info = leFlood(s)  
+        # Atualiza Time-to-Live
         ttl -= 1
         
-        if nseqRecv in mensagens[porto_orig]:
-            print("Mensagem de alagamento repetida.")
+        # Checa se amensagem não é repetida
+        # Se não for, adiciona na tabela
+        if porto_orig in mensagens:
+            if nseqRecv in mensagens[porto_orig]:
+                print("Mensagem de alagamento repetida.")
+                # Se for repetida, não retransmite
+                return False
+        else:
+            if porto_orig in mensagens:
+                mensagens[porto_orig].append(nseqRecv)
+            else: 
+                mensagens[porto_orig] = [nseqRecv]
         
+        # Se a mensagem ainda está viva
         if ttl > 0:
-            # Passa adiante
+            # Passa adiante para seus vizinhos
             if tipoRecv == TOPOFLOOD:
                 # Adiciona seu próprio endereço a info
-                info += '127.0.0.1:'+str(porta)
+                info += '127.0.0.1:'+str(porta)+' '
                 # Envia aos vizinhos, e abre conexão com o programa que iniciou
                 # a requisição a partir do IP e porto
                 # Abre conexão
                 # Envia resposta
-                resposta = criaRespMsg(info)
+                msg = criaFloodMsg(TOPOFLOOD, info, nseqRecv, porto_orig, ttl)                
+                alagamento(msg, s, i)
+                
+                resposta = criaRespMsg(info, nseqRecv)
+                conectaCliente(resposta, ip_orig, porto_orig)
             else:
                 # É KEYFLOOD
                 # Procura mensagem no banco
@@ -228,12 +263,18 @@ def recebeMsg(s, tipoRecv):
                     print("Eu tenho a chave!")
                     # Conecta com o cliente
                     # Envia resp
-                    resposta = criaRespMsg(banco[info])
+                    resposta = criaRespMsg(banco[info], nseqRecv)
+                    
+                    conectaCliente(resposta, ip_orig, porto_orig)
+                    
+                else:
+                    msg = criaFloodMsg(KEYFLOOD, info, nseqRecv, porto_orig, ttl)
+                    alagamento(msg, s, i)
         
     elif tipoRecv == RESP:
         # Não importa, essa mensagem nao é esperada pelo servent
         # Mas precisa lê-la pelo bytestream do TCP
-        print("Tipo inválida, descartando mesnagem.")
+        print("Tipo inválido, descartando mensagem.")
         leResp(s)  
     
     return False
@@ -260,13 +301,14 @@ mensagens = {}
 inputs = [server]
 outputs = []
 message_queues = {}
+portoC = 9091
 
 # Conecta com seus vizinhos, se existirem
 for v in vizinhos:
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     h, p = v.split(":")
     print("Cnectando a "+h+", "+p)
-    s.accept((h,int(p)))
+    s.connect((h,int(p)))
     s.setblocking(0)
     inputs.append(s)
     # Envia mensagem de ID para o vizinho
@@ -288,17 +330,15 @@ while inputs:
                 message_queues[conn] = queue.Queue()
             else:
                 print("Recebendo mensagem")
-                msg = s.recv(2)            
-
-                
+                msg = s.recv(2)                     
                 if msg:
+                    # Recebe o tipo
                     msgUnp = struct.unpack("!h", msg)
                     tipoRecv = msgUnp[0]
-                    mensagem = recebeMsg(s, tipoRecv)
+                    mensagem = recebeMsg(s, tipoRecv, inputs)
                     if mensagem:
                         message_queues[s].put(mensagem) # Mensagem de resposta na fila
                         print("Teste envio")
-                    #s.send(msg)
                     if s not in outputs:
                         outputs.append(s)
                     # Checar se a mensagem ID veio de cliente ou servidor?
@@ -309,8 +349,7 @@ while inputs:
                         outputs.remove(s)
                     inputs.remove(s)
                     s.close()
-                    del message_queues[s]
-                   
+                    del message_queues[s]                  
         for s in writable:
             try:
                 print("Adicionando mensagem na fila")
