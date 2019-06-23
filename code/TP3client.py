@@ -11,10 +11,7 @@ CLIENTE
 Versão utilizada: Python 3.6.7
 
 '''
-
 import sys, socket, struct
-#socket.getdefaulttimeout()
-#socket.setdefaulttimeout(4)
 
 # Definições de tipos de mensagens
 IDmsg = 4
@@ -28,43 +25,18 @@ RESP = 9
 # Requisição de chave ou req. de topologia
 # E mensagem de ID
 def criaKeyReq(c, nseq):    
-    '''
-    KEYREQ
-    
-    +--2--+---4--+----2----+---//--+
-    |  5  | NSEQ | TAMANHO | CHAVE |
-    +-----+------+---------+--//---+
-    
-    '''
     tipo = KEYREQ
     chave = bytes(c, 'ascii')
-    tamanho = len(chave)
-    
+    tamanho = len(chave)    
     keyreq = struct.pack("!hih%ds"%(tamanho,), tipo, nseq, tamanho, chave)
     return keyreq
 
 def criaTopoReq(nseq):    
-    '''
-    TOPOREQ
-    
-    +--2--+---4--+
-    |  6  | NSEQ |
-    +-----+------+
-    
-    '''
     tipo = TOPOREQ
     toporeq = struct.pack("!hi", tipo, nseq)    
     return toporeq
 
-def criaIDmsg():    
-    '''
-    ID
-    
-    +--2--+-----------2-----------+
-    |  4  |  PORTO (0 se servent) |
-    +-----+-----------------------+
-    
-    '''    
+def criaIDmsg(porta):    
     idmsg = struct.pack("!hh", IDmsg, porta)    
     return idmsg
 
@@ -79,7 +51,7 @@ def leIDmsg(s):
         print("IDmsg de servent")
     else:
         print("IDmsg - porto: "+str(porto))
-    
+        
 def leKeyReq(s):
     msg = s.recv(4)
     msgUnp = struct.unpack("!i", msg)
@@ -89,10 +61,9 @@ def leKeyReq(s):
     tamanho = msgUnp[0]    
     msg = s.recv(tamanho)
     msgUnp = struct.unpack("!%ds"%(tamanho), msg)
-    chave = str(msgUnp[0], 'ascii')
-    
+    chave = str(msgUnp[0], 'ascii')    
     print("KeyReq - nseq: "+str(nseqRecv)+", chave: "+chave)
-
+    
 def leTopoReq(s):
     msg = s.recv(4)
     msgUnp = struct.unpack("!i", msg)
@@ -114,7 +85,7 @@ def leFlood(s):
         if i < 3:
             IP_ORIG += '.'            
     msg = s.recv(2)
-    msgUnp = struct.unpack("!h", msg)
+    msgUnp = struct.unpack("!H", msg)
     PORTO_ORIG = msgUnp[0]               
     msg = s.recv(2)
     msgUnp = struct.unpack("!h", msg)
@@ -124,7 +95,7 @@ def leFlood(s):
     info = str(msgUnp[0], 'ascii')
     
     print("Flood - TTL: "+str(TTL)+", nseq: "+str(nseqRecv)+", IP: "+IP_ORIG+", PORTO: "+str(PORTO_ORIG)+", INFO: "+info)
-    
+
 def leResp(s, nseq):
     # Lê nseq
     msg = s.recv(4)
@@ -145,7 +116,7 @@ def leResp(s, nseq):
         return True
     else:
         return False
-
+    
 def consultaChave(c, nseq):
     # Cria mensagem de requisição de chave e envia para seu servent
     msg = criaKeyReq(c, nseq)
@@ -161,24 +132,21 @@ def consultaTopologia(nseq):
     esperaResp(nseq)
     
 def esperaResp(nseq):
-    resp = False    
-    while True:#not resp:
+    resp = False
+    print("Esperando resposta")
+    while True:
         try:
-            print("Esperando resposta")
-            # Espera 4 segundos para conectar com algum socket
-            csocket.settimeout(4)
-            #csocket.listen(1)
-            #conn, address = csocket.accept() 
-            #msg = criaIDmsg()
-            # Envia mensagem de ID ao servent dizendo que é
-            # cliente e qual sua porta
-            #csocket.send(msg)
-            resp = recebeMsg(csocket, nseq)
+            # Espera conexões
+            ssocket.settimeout(4)
+            ssocket.listen()
+            conn, addr = ssocket.accept()
+            print("Conexão aceita com "+str(addr))
+            resp = recebeMsg(conn, nseq)   
         except socket.timeout:
             if not resp:
                 print("Nenhuma resposta recebida.")
             break
-        
+    
 def recebeMsg(s, nseq):
     # Lê o tipo para saber como ler o restante
     msg = s.recv(2)
@@ -199,13 +167,12 @@ def recebeMsg(s, nseq):
             if valida:
                 return True
     # Todas as outras mensagens são ignoradas
-    return False                
+    return False   
 
 def iniciaConsultas():
     nseq = 0
     for comando in sys.stdin:
-        consulta = comando.split()
-        
+        consulta = comando.split()        
         if consulta[0] == '?':
             # Consulta por Chave
             chave = consulta[1]
@@ -225,14 +192,14 @@ def iniciaConsultas():
             print("Comando desconhecido. Tente:")
             print("-- ? rtmp")
             print("-- T")
-            print("-- Q")            
+            print("-- Q")  
             
 ''' Inicialização do programa
     Inicia conexão com o servent
     Envia mensagem de identificação para o servent (?) '''
     
 if len(sys.argv) > 2:
-    porta = int(sys.argv[1])
+    portaC = int(sys.argv[1])
     enderecoS, portaS = sys.argv[2].split(":")
 else:
     print("Número de argumentos inválido.")
@@ -242,11 +209,14 @@ else:
 csocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)        
 endServidor = (enderecoS, int(portaS))
 csocket.connect(endServidor)
+print("Conectado ao servent: "+enderecoS)
 
-print("> Conectado ao servent: "+enderecoS)
+ssocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+ssocket.bind(("", portaC))
+print("Abrindo porta "+str(portaC))
 
 # Envia mensagem de ID para o servent
-msg = criaIDmsg()
+msg = criaIDmsg(portaC)
 csocket.send(msg)
 
 # Inicia loop para espera de comandos do usuario
@@ -255,4 +225,5 @@ try:
 except KeyboardInterrupt:
     print("Terminando a execução do cliente.")
     csocket.close()
+    ssocket.close()
     sys.exit(1)
