@@ -120,8 +120,9 @@ def leIDmsg(s):
 def alagamento(msg, s, conn):
     for i in conn:
         if i is not server and i is not s:
-            print("Enviando mensagem de alagamento para "+str(i.getpeername()))
-            i.send(msg)
+            if i.getpeername() not in clients:
+                print("Enviando mensagem de alagamento para "+str(i.getpeername()))
+                i.send(msg)
                 
 def conectaCliente(msg, ipC, portoC):
     print("Conectando com o cliente no porto "+str(portoC))
@@ -162,8 +163,7 @@ def recebeMsg(s, tipoRecv, i):
         conectaCliente(resposta, '127.0.0.1', porto_orig)
         return resposta
     elif tipoRecv == KEYFLOOD or tipoRecv == TOPOFLOOD:
-        ttl, nseqRecv, ip_orig, porto_orig, info = leFlood(s)
-        ttl -= 1        
+        ttl, nseqRecv, ip_orig, porto_orig, info = leFlood(s)               
         if porto_orig in mensagens:
             if nseqRecv in mensagens[porto_orig]:
                 print("Mensagem recebida repetida, descartada.")
@@ -174,6 +174,7 @@ def recebeMsg(s, tipoRecv, i):
             else:
                 mensagens[porto_orig] = [nseqRecv]
         if ttl > 0:
+            ttl -= 1 
             if tipoRecv == TOPOFLOOD:
                 info += ' 127.0.0.1:'+str(portaS)
                 print("Mensagem de alagamento recebida. Enviando resposta para cliente no porto "+str(porto_orig))
@@ -229,6 +230,7 @@ for v in vizinhos:
     inputs.append(s)
     msg = criaIDmsg()
     s.send(msg)
+    servents.append(s.getpeername())
     message_queues[s] = queue.Queue()
     
 while inputs:
